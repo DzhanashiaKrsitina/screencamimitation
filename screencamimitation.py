@@ -282,7 +282,7 @@ graph.visual_graph.render("HDRNet", format="png")
 
 
 advanced_mod = True
-inference_dataset_root = "C:\RABOTA\mdpi\program-master\content\images"
+inference_dataset_root = "images"
 use_uploaded_model = True
 uploaded_checkpoint_path = "checkpoint_hdrnet_v2_epoch_50.pth"
 img_size_for_model = 256  #не менять
