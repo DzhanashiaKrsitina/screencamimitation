@@ -13,7 +13,7 @@ To run this program:
 
 **Data preparation**
 
-All images for processing must be saved in **./images/cover/[subdirectories]** e.g. "./images/cover/firstbatch/1.jpg". The naming of subdirecties and individual images is irrelevant.
+All images for processing must be saved in **./images/cover/[subdirectories]** e.g. "./images/cover/firstbatch/1.jpg". The naming of subdirectories and individual images is irrelevant.
 By default only .jpg images proccessed, the working format can be changes inside the code.
 After processing the resulting images are saved in **./images/output/[subdirectories]**  e.g. "./images/output/firstbatch/1.jpg".
 
@@ -23,7 +23,7 @@ The program consists of one .py file.
 
 The main components include:
 
-* **PairedImageDataset** – Custom PyTorch Dataset that loads paired “cover” and “final” images from a dataset directory for inference.
+* **PairedImageDataset** – custom PyTorch Dataset that loads paired “cover” and “final” images from a dataset directory for inference.
 * **tensor_to_pil(tensor_img)** – converts normalized PyTorch tensors back to PIL images.
 * **apply_basic_transform(image, ...) / apply_advanced_transform(image, ...)** – geometric and noise-based tranformations
 * **HDRNet** – neural network model for screen-cam initation
