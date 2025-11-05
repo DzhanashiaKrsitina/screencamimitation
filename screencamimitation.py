@@ -1,21 +1,17 @@
 import os
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
-import matplotlib.pyplot as plt
-from tqdm.notebook import tqdm
 import random
 from PIL import Image, ImageOps, ImageFilter
 import cv2
 import numpy as np
-from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
-from torchview import draw_graph
 
 
-output_dir="output"
+inference_dataset_root = "./images"
+output_dir="./images/output"
 os.makedirs(output_dir, exist_ok=True)
 
 """Images to tensors PIL for inference"""
@@ -33,17 +29,20 @@ def tensor_to_pil(tensor_img):
 
 class PairedImageDataset(Dataset):
     def __init__(self, dataset_root, image_size=512):
+        self.dataset_root = dataset_root
         self.pairs = []
         cover_root = os.path.join(dataset_root, "cover")
         final_root = os.path.join(dataset_root, "final")
+        if not os.path.isdir(final_root): #if not final images are provided
+            final_root = cover_root
         for subfolder in sorted(os.listdir(cover_root)):
             cover_sub = os.path.join(cover_root, subfolder)
             final_sub = os.path.join(final_root, subfolder)
             if os.path.isdir(cover_sub) and os.path.isdir(final_sub):
-                cover_files = sorted([f for f in os.listdir(cover_sub) if f.lower().endswith(".png")])
+                cover_files = sorted([f for f in os.listdir(cover_sub) if f.lower().endswith(".jpg")])
                 for fname in cover_files:
                     cover_path = os.path.join(cover_sub, fname)
-                    final_fname = os.path.splitext(fname)[0] + ".png"
+                    final_fname = os.path.splitext(fname)[0] + ".jpg"
                     final_path = os.path.join(final_sub, final_fname)
                     if not os.path.exists(final_path):
                         final_path = os.path.join(final_sub, fname)
@@ -65,10 +64,16 @@ class PairedImageDataset(Dataset):
         cover_path, final_path = self.pairs[idx]
         cover_img = Image.open(cover_path).convert("RGB")
         final_img = Image.open(final_path).convert("RGB")
+
+        # relative path inside "cover"
+        rel_path = os.path.relpath(cover_path, os.path.join(self.dataset_root, "cover"))
+
         return {
             "cover": self.transform(cover_img),
             "final": self.transform(final_img),
-            "filename": os.path.basename(cover_path)
+            "rel_path": rel_path,  # e.g. "1/1.png"
+            "cover_path": cover_path,  # NEW
+            "final_path": final_path  # NEW
         }
 
 def add_gaussian_noise(image, mean=0, std=2):
@@ -124,23 +129,6 @@ def apply_advanced_transform(image, max_angle=3, max_pad=0.1, distortion_scale=0
     if noise_std > 0:
         padded = add_gaussian_noise(padded, std=noise_std)
     return padded
-
-
-def compute_metrics(img_target, img_generated):
-    np_target = np.array(img_target).astype(np.float32) / 255.0
-    np_generated = np.array(img_generated).astype(np.float32) / 255.0
-    mse_val = mean_squared_error(np_target, np_generated)
-    psnr_val = peak_signal_noise_ratio(np_target, np_generated, data_range=1.0)
-    h, w, c = np_target.shape
-    max_win_size = min(h, w, 7)
-    ssim_val = structural_similarity(
-        np_target,
-        np_generated,
-        data_range=1.0,
-        channel_axis=-1,
-        win_size=max_win_size
-    )
-    return mse_val, psnr_val, ssim_val
 
 class STN(nn.Module):
     def __init__(self):
@@ -269,25 +257,12 @@ class MultiScaleDiscriminator(nn.Module):
         return results
 
 
-model = MultiScaleDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
-dummy = torch.randn(1, 3, 256, 256)   # batch of RGB 256×256 images
-graph = draw_graph(model, input_data=dummy)
-graph.visual_graph.render("multiscale_discriminator", format="png")
-
-model = HDRNet(input_nc=3, output_nc=3)
-dummy = torch.randn(1, 3, 256, 256)   # batch of RGB 256×256 images
-graph = draw_graph(model, input_data=dummy)
-graph.visual_graph.render("HDRNet", format="png")
-
-
-
 advanced_mod = True
-inference_dataset_root = "images"
 use_uploaded_model = True
 uploaded_checkpoint_path = "checkpoint_hdrnet_v2_epoch_50.pth"
-img_size_for_model = 256  #не менять
+img_size_for_model = 256
 inference_full_dataset = PairedImageDataset(inference_dataset_root, image_size=img_size_for_model)
-print(f"Loaded inference dataset wtih {len(inference_full_dataset)} image pairs.")
+print(f"Loaded inference dataset with {len(inference_full_dataset)} image pairs.")
 if advanced_mod:
     transform_func = apply_advanced_transform
 else:
@@ -299,34 +274,46 @@ generator = HDRNet(input_nc=3, output_nc=3).to(device)
 if use_uploaded_model:
     ckpt = torch.load(uploaded_checkpoint_path, map_location=device, weights_only=True)
     generator.load_state_dict(ckpt["generator"])
-    print(f"Загружены веса генератора из: {uploaded_checkpoint_path}")
+    print(f"Weights loaded from: {uploaded_checkpoint_path}")
 generator.eval()
-mse_list, psnr_list, ssim_list = [], [], []
 for idx in range(len(inference_full_dataset)):
     sample = inference_full_dataset[idx]
     cover_tensor = sample["cover"].to(device)
-    filename = sample["filename"]
+    #filename = sample["filename"]
     #    final_tensor = sample["final"].to(device)
     with torch.no_grad():
         fake_tensor = generator(cover_tensor.unsqueeze(0)).squeeze(0)
     fake_image = tensor_to_pil(fake_tensor.cpu())
     transformed_image=fake_image
-    #if advanced_mod:
-    #    transformed_image = transform_func(
-    #        fake_image,
-    #        max_angle=3,#3
-    #        max_pad=0.01, #0.01
-    #        distortion_scale=0.05,
-    #        noise_std=0.1)
-    #else:
-    #    transformed_image = transform_func(
-    #        fake_image,
-    #        max_angle=3, #3
-    #        max_pad=0.01, #0.01
-    #        noise_std=0.1)
+    if advanced_mod:
+        transformed_image = transform_func(
+            fake_image,
+            max_angle=3,#3
+            max_pad=0.01, #0.01
+            distortion_scale=0.05,
+            noise_std=0.1)
+    else:
+        transformed_image = transform_func(
+            fake_image,
+            max_angle=3, #3
+            max_pad=0.01, #0.01
+            noise_std=0.1)
     final_image = tensor_to_pil(fake_tensor.cpu())
     w, h = transformed_image.size
     final_resized = final_image.resize((w, h), Image.Resampling.BILINEAR)
 
-    output_path = os.path.join(output_dir, filename)
+    dataset_root = inference_full_dataset.dataset_root
+
+    rel_path = os.path.relpath(sample["cover_path"], os.path.join(dataset_root, "cover"))
+    rel_dir = os.path.dirname(rel_path)
+
+    name, ext = os.path.splitext(os.path.basename(rel_path))  # NEW
+    new_filename = f"{name}{ext}"
+
+    output_subdir = os.path.join(output_dir, rel_dir)  # NEW
+    os.makedirs(output_subdir, exist_ok=True)  # NEW
+
+    output_path = os.path.join(output_subdir, new_filename)  # CHANGED
     transformed_image.save(output_path)
+
+print("Done")
